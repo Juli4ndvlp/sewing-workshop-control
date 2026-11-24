@@ -1,147 +1,250 @@
-import React from 'react';
-import { X, Printer, Scissors, CheckCircle2 } from 'lucide-react';
-import { Order, Customer, GarmentType, AppConfig } from '../../models/types';
-import { printOrderTicket } from '../../services/pdfService';
+import React, { useEffect, useState } from 'react';
+import { X, Printer, Scissors } from 'lucide-react';
+import { AppConfig, Customer, GarmentType, Order, OrderStatus } from '../../models/types';
+import { db } from '../../repositories/dexie/db';
+import { settingsRepository } from '../../repositories/dexie/settingsRepository';
+// PDF cargado bajo demanda.
+import { formatDate } from '../../utils/dates';
+import { calculatePendingBalance, formatCurrency } from '../../utils/money';
+import { useDialogA11y } from '../../hooks/useDialogA11y';
 
 interface OrderReceiptModalProps {
   order: Order | null;
   onClose: () => void;
 }
 
+const statusLabels: Record<OrderStatus, string> = {
+  pending: 'Pendiente',
+  in_progress: 'En confección',
+  ready: 'Listo para entrega',
+  delivered: 'Entregado',
+  cancelled: 'Cancelado'
+};
+
+const defaultConfig: AppConfig = {
+  id: 'default',
+  profitMargin: 30,
+  currency: 'COP',
+  businessName: 'Edna Atelier',
+  logoDataUrl: '/edna-logo.jpg'
+};
+
 export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({ order, onClose }) => {
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [garment, setGarment] = useState<GarmentType | null>(null);
+  const [config, setConfig] = useState<AppConfig>(defaultConfig);
+
+  useEffect(() => {
+    if (!order) return;
+
+    let cancelled = false;
+    const loadData = async () => {
+      try {
+        const [loadedCustomer, loadedGarment, loadedConfig] = await Promise.all([
+          order.customerId ? db.customers.get(order.customerId) : Promise.resolve(undefined),
+          order.garmentTypeId
+            ? db.garmentTypes.get(order.garmentTypeId)
+            : Promise.resolve(undefined),
+          settingsRepository.getConfig()
+        ]);
+
+        if (cancelled) return;
+        setCustomer(loadedCustomer ?? null);
+        setGarment(loadedGarment ?? null);
+        setConfig(loadedConfig);
+      } catch (error) {
+        console.error('Error al cargar datos del comprobante:', error);
+      }
+    };
+
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [order]);
+
+  const dialogRef = useDialogA11y(!!order, onClose);
+
   if (!order) return null;
 
-  const handlePrint = () => {
-    const appConfig: AppConfig = {
-      id: 'default',
-      profitMargin: 30,
-      currency: 'COP',
-      businessName: 'Edna Atelier',
-      logoDataUrl: '/edna-logo.svg',
+  const totalPrice = Math.max(0, order.financials?.totalPrice ?? 0);
+  const advancePayment = Math.max(0, order.financials?.advancePayment ?? 0);
+  const pendingBalance = calculatePendingBalance(totalPrice, advancePayment);
+  const isPaid = pendingBalance <= 0 && totalPrice > 0;
+  const customerName = customer?.fullName || 'Cliente no registrado';
+  const garmentName = garment?.name || order.garmentType || 'Prenda personalizada';
+
+  const handlePrint = async () => {
+    const fallbackCustomer: Customer = customer || {
+      id: order.customerId || 'unknown',
+      fullName: 'Cliente no registrado',
+      createdAt: new Date().toISOString()
+    };
+    const fallbackGarment: GarmentType = garment || {
+      id: order.garmentTypeId || 'unknown',
+      name: garmentName,
+      active: true
     };
 
-    const customer: Customer = {
-      id: 'customer-default',
-      fullName: 'Cliente General',
-      phone: 'Sin teléfono',
-      createdAt: new Date().toISOString(),
-    };
-
-    const garment: GarmentType = {
-      id: order.garmentTypeId || 'garment-default',
-      name: order.garmentType || 'Prenda en encargo',
-      active: true,
-    };
-
-    void printOrderTicket(order, customer, garment, appConfig);
+    const { printOrderTicket } = await import('../../services/pdfService');
+    await printOrderTicket(order, fallbackCustomer, fallbackGarment, config);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white w-full max-w-xl rounded-2xl shadow-xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh]">
-        
-        {/* Barra superior (No se imprime) */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50 print:hidden">
-          <h3 className="text-sm font-semibold text-slate-800">Comprobante de Encargo</h3>
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#252220]/35 backdrop-blur-md p-4 overflow-y-auto outline-none"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="glass-panel-strong w-full max-w-2xl rounded-3xl overflow-hidden my-8 flex flex-col max-h-[90vh] border border-white/70 shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/50 bg-white/20 print:hidden">
+          <div>
+            <h3 className="text-sm font-semibold text-stone-800">Comprobante de pedido</h3>
+            <p className="text-xs text-stone-500">Vista previa antes de descargar el PDF</p>
+          </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium rounded-lg transition-colors"
-            >
+            <button onClick={handlePrint} className="glass-btn-primary !px-3 !py-1.5 text-xs">
               <Printer size={14} /> Descargar PDF
             </button>
-            <button 
+            <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              aria-label="Cerrar comprobante"
+              className="p-1.5 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
             >
               <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* Contenido del Recibo (Optimizado para impresión) */}
-        <div className="p-8 space-y-6 overflow-y-auto print:p-2 print:space-y-4 text-slate-800 font-sans">
-          
-          {/* Encabezado del Atelier */}
-          <div className="text-center space-y-1 border-b border-slate-200 pb-6">
-            <div className="inline-flex p-2 bg-slate-900 text-white rounded-xl mb-1">
-              <Scissors size={20} />
-            </div>
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">Edna Atelier</h2>
-            <p className="text-xs text-slate-500">Alta Costura y Confección a Medida</p>
-            <p className="text-xs text-slate-400 mt-2">Orden de Trabajo #{order.id?.slice(0, 8).toUpperCase()}</p>
-          </div>
-
-          {/* Fechas e Info Básica */}
-          <div className="grid grid-cols-2 gap-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-100">
-            <div>
-              <span className="text-slate-400 block font-medium">Fecha de Emisión</span>
-              <span className="font-semibold text-slate-700">
-                {order.dates?.createdAt ? new Date(order.dates.createdAt).toLocaleDateString() : new Date().toLocaleDateString()}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-400 block font-medium">Fecha de Entrega Estimada</span>
-              <span className="font-semibold text-slate-700">
-                {order.dates?.deliveryDate ? new Date(order.dates.deliveryDate).toLocaleDateString() : 'Por coordinar'}
-              </span>
-            </div>
-          </div>
-
-          {/* Detalle de la Prenda */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Especificación de la Prenda</h4>
-            <div className="p-4 border border-slate-200 rounded-xl space-y-2">
-              <div className="flex justify-between items-center font-bold text-sm">
-                <span>{order.garmentType || 'Prenda en encargo'}</span>
-                <span className="text-xs px-2.5 py-1 bg-slate-100 rounded-full font-medium uppercase">{order.status}</span>
+        <div className="p-8 space-y-6 overflow-y-auto text-stone-800">
+          <div className="rounded-2xl bg-gradient-to-br from-[#6f2f3a] to-[#582430] text-[#fffaf5] p-6 md:p-7 relative overflow-hidden shadow-lg shadow-[#6f2f3a]/20">
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-[#a08a63]/40 via-[#a08a63]/80 to-[#a08a63]/40" />
+            <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-white/5 blur-2xl" />
+            <div className="flex items-start justify-between gap-4 relative">
+              <div className="flex items-center gap-3.5">
+                {config.logoDataUrl ? (
+                  <div className="h-14 w-auto max-w-[180px] rounded-xl overflow-hidden ring-1 ring-white/20 shadow-md bg-[#45131e] flex items-center justify-center p-0.5 flex-shrink-0">
+                    <img
+                      src={config.logoDataUrl}
+                      alt={config.businessName || 'Edna Atelier'}
+                      className="h-full w-auto object-contain rounded-lg"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center backdrop-blur-sm flex-shrink-0">
+                    <Scissors size={22} />
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-[#e8dcc8]/80">
+                    Comprobante
+                  </p>
+                  <h2 className="text-xl font-bold tracking-tight">
+                    {config.businessName || 'Edna Atelier'}
+                  </h2>
+                  <p className="text-xs text-stone-300">Alta costura y confección a medida</p>
+                </div>
               </div>
-              <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">
-                {order.notes || order.description || 'Sin observaciones detalladas.'}
+              <div className="text-right">
+                <p className="text-xs text-stone-300">N° {order.id.slice(0, 8).toUpperCase()}</p>
+                <p className="text-sm font-semibold">{formatDate(order.createdAt)}</p>
+                <span
+                  className={`inline-flex mt-2 text-[11px] font-semibold px-2.5 py-1 rounded-full ${isPaid ? 'bg-emerald-500/20 text-emerald-200' : 'bg-amber-500/20 text-amber-200'}`}
+                >
+                  {isPaid ? 'PAGADO' : 'SALDO PENDIENTE'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+            <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/60">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-400 mb-2">
+                Cliente
+              </p>
+              <p className="font-semibold text-stone-800">{customerName}</p>
+              <p className="text-stone-500 text-xs mt-1">{customer?.phone || 'Sin teléfono'}</p>
+              {customer?.email && <p className="text-stone-500 text-xs">{customer.email}</p>}
+            </div>
+            <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/60">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-400 mb-2">
+                Pedido
+              </p>
+              <p className="text-stone-700">
+                <span className="text-stone-400">Entrega:</span>{' '}
+                {order.deliveryDate ? formatDate(order.deliveryDate) : 'Por coordinar'}
+              </p>
+              <p className="text-stone-700">
+                <span className="text-stone-400">Estado:</span> {statusLabels[order.status]}
+              </p>
+              <p className="text-stone-700">
+                <span className="text-stone-400">Talla:</span> {order.size || 'No especificada'}
               </p>
             </div>
           </div>
 
-          {/* Resumen Financiero */}
           <div className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Resumen Financiero</h4>
-            <div className="border border-slate-200 rounded-xl overflow-hidden text-sm divide-y divide-slate-100">
-              <div className="flex justify-between p-3 bg-slate-50/50">
-                <span className="text-slate-600">Valor Total de la Prenda</span>
-                <span className="font-bold text-slate-900">${order.financials?.totalPrice?.toLocaleString() || 0}</span>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-stone-400">
+              Detalle del encargo
+            </h4>
+            <div className="border border-stone-200 rounded-xl overflow-hidden">
+              <div className="grid grid-cols-[1fr_auto] gap-4 px-4 py-3 bg-stone-50 text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+                <span>Descripción</span>
+                <span>Valor</span>
               </div>
-              <div className="flex justify-between p-3">
-                <span className="text-emerald-700 font-medium">Anticipo / Abono Realizado</span>
-                <span className="font-bold text-emerald-700">-${order.financials?.advancePayment?.toLocaleString() || 0}</span>
-              </div>
-              <div className="flex justify-between p-3 bg-amber-50/50">
-                <span className="text-amber-800 font-semibold">Saldo Pendiente por Cancelar</span>
-                <span className="font-bold text-amber-600">${order.financials?.pendingBalance?.toLocaleString() || 0}</span>
+              <div className="grid grid-cols-[1fr_auto] gap-4 px-4 py-4 items-start">
+                <div>
+                  <p className="font-semibold text-stone-800">{garmentName}</p>
+                  <p className="text-xs text-stone-500 mt-1 whitespace-pre-line">
+                    {order.description || order.notes || 'Sin observaciones adicionales.'}
+                  </p>
+                </div>
+                <p className="font-semibold text-stone-800">
+                  {formatCurrency(totalPrice, config.currency)}
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Firma / Nota de Cierre */}
-          <div className="pt-6 text-center text-xs text-slate-400 border-t border-slate-100 space-y-4">
-            <p>Gracias por confiar en nuestros servicios de alta costura.</p>
-            <div className="pt-8 flex justify-around">
-              <div className="border-t border-slate-300 w-40 pt-1 text-slate-500 font-medium">Firma del Taller</div>
-              <div className="border-t border-slate-300 w-40 pt-1 text-slate-500 font-medium">Firma del Cliente</div>
+          <div className="flex justify-end">
+            <div className="w-full sm:w-72 border border-stone-200 rounded-xl overflow-hidden text-sm">
+              <div className="flex justify-between px-4 py-3 bg-white">
+                <span className="text-stone-500">Total</span>
+                <span className="font-medium text-stone-800">
+                  {formatCurrency(totalPrice, config.currency)}
+                </span>
+              </div>
+              <div className="flex justify-between px-4 py-3 bg-white border-t border-stone-100">
+                <span className="text-stone-500">Abono</span>
+                <span className="font-medium text-emerald-700">
+                  -{formatCurrency(advancePayment, config.currency)}
+                </span>
+              </div>
+              <div
+                className={`flex justify-between px-4 py-3 border-t border-stone-100 ${isPaid ? 'bg-emerald-50' : 'bg-amber-50'}`}
+              >
+                <span className={`font-semibold ${isPaid ? 'text-emerald-800' : 'text-[#6b5a38]'}`}>
+                  {isPaid ? 'Pagado' : 'Saldo pendiente'}
+                </span>
+                <span className={`font-bold ${isPaid ? 'text-emerald-700' : 'text-[#7a6843]'}`}>
+                  {isPaid
+                    ? formatCurrency(0, config.currency)
+                    : formatCurrency(pendingBalance, config.currency)}
+                </span>
+              </div>
             </div>
           </div>
 
+          <div className="pt-4 border-t border-stone-100 text-xs text-stone-400 flex items-end justify-between gap-6">
+            <p>Gracias por confiar en {config.businessName || 'Edna Atelier'}.</p>
+            <div className="flex gap-8">
+              <div className="w-32 border-t border-stone-300 pt-1 text-center">Taller</div>
+              <div className="w-32 border-t border-stone-300 pt-1 text-center">Cliente</div>
+            </div>
+          </div>
         </div>
-
-        {/* Pie de modal (No se imprime) */}
-        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-end print:hidden">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-xl transition-colors"
-          >
-            Cerrar
-          </button>
-        </div>
-
       </div>
     </div>
   );

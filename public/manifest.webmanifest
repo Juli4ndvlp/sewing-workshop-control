@@ -1,0 +1,33 @@
+{
+  "name": "Edna Atelier",
+  "short_name": "Edna Atelier",
+  "description": "Gestión de taller de costura",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafaf9",
+  "theme_color": "#1c1917",
+  "lang": "es-CO",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/edna-logo.jpg",
+      "sizes": "1024x370",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/edna-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -23,6 +23,40 @@ export interface OrderFinancials {
   pendingBalance: number;
 }
 
+export interface Payment {
+  id: string;
+  orderId: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  note?: string;
+  createdAt: string;
+}
+
+export interface OrderStatusHistory {
+  id: string;
+  orderId: string;
+  fromStatus: OrderStatus | null;
+  toStatus: OrderStatus;
+  note?: string;
+  createdAt: string;
+}
+
+export interface OrderConsumption {
+  inventoryItemId: string;
+  quantity: number;
+}
+
+export interface InventoryMovement {
+  id: string;
+  inventoryItemId: string;
+  orderId?: string;
+  type: 'manual' | 'order_deduct' | 'order_return' | 'adjustment';
+  quantityChange: number; // signed: negative deducts, positive returns/adds
+  stockAfter: number;
+  note?: string;
+  createdAt: string;
+}
+
 export interface Order {
   id: string;
   customerId: string;
@@ -32,15 +66,13 @@ export interface Order {
   fabricId?: string;
   status: OrderStatus;
   deliveryDate: string;
-  dates?: {
-    createdAt?: string;
-    deliveryDate?: string;
-  };
   measurements: Record<string, number>;
   financials: OrderFinancials;
+  consumptions?: OrderConsumption[];
   createdAt: string;
   description?: string;
   notes?: string;
+  cancellationReason?: string;
   updatedAt?: string;
 }
 
@@ -60,6 +92,7 @@ export interface AppConfig {
   id: string;
   profitMargin: number;
   currency: string;
+  defaultMeasurementUnit?: 'cm' | 'in';
   businessName?: string;
   logoDataUrl?: string;
 }
@@ -80,6 +113,7 @@ export interface InventoryItem {
   stock: number;
   unit: string;
   unitCost: number;
+  minStock?: number;
   quantity?: number;
   unitPrice?: number;
   updatedAt: string;

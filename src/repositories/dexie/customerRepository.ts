@@ -1,16 +1,14 @@
-// src/repositories/dexie/DexieCustomerRepository.ts
 import { db } from './db';
 import { Customer } from '../../models/types';
-import { ICustomerRepository } from '../contracts/ICustomerRepository';
 
-export class DexieCustomerRepository implements ICustomerRepository {
+export const customerRepository = {
   async getAll(): Promise<Customer[]> {
     return await db.customers.orderBy('createdAt').reverse().toArray();
-  }
+  },
 
   async getById(id: string): Promise<Customer | undefined> {
     return await db.customers.get(id);
-  }
+  },
 
   async search(query: string): Promise<Customer[]> {
     const q = query.toLowerCase().trim();
@@ -18,7 +16,7 @@ export class DexieCustomerRepository implements ICustomerRepository {
     return await db.customers
       .filter((c: Customer) => c.fullName.toLowerCase().includes(q) || (c.phone ?? '').includes(q))
       .toArray();
-  }
+  },
 
   async create(data: Omit<Customer, 'id' | 'createdAt'>): Promise<Customer> {
     const newCustomer: Customer = {
@@ -28,17 +26,25 @@ export class DexieCustomerRepository implements ICustomerRepository {
     };
     await db.customers.add(newCustomer);
     return newCustomer;
-  }
+  },
 
   async update(id: string, data: Partial<Customer>): Promise<Customer> {
     await db.customers.update(id, data);
     const updated = await this.getById(id);
     if (!updated) throw new Error('Cliente no encontrado');
     return updated;
-  }
+  },
 
   async delete(id: string): Promise<boolean> {
-    await db.customers.delete(id);
-    return true;
+    return db.transaction('rw', [db.customers, db.orders], async () => {
+      const orderCount = await db.orders.where('customerId').equals(id).count();
+      if (orderCount > 0) {
+        throw new Error(
+          `No se puede eliminar: el cliente tiene ${orderCount} pedido(s) asociado(s).`
+        );
+      }
+      await db.customers.delete(id);
+      return true;
+    });
   }
-}
+};
